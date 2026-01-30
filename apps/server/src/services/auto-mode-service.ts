@@ -1347,35 +1347,60 @@ export class AutoModeService {
         );
       }
 
-      // Determine final status based on testing mode:
-      // - skipTests=false (automated testing): go directly to 'verified' (no manual verify needed)
+      // Read agent output first to check for test results
+      const featureDir = getFeatureDir(projectPath, featureId);
+      const outputPath = path.join(featureDir, 'agent-output.md');
+      let agentOutput = '';
+      try {
+        const outputContent = await secureFs.readFile(outputPath, 'utf-8');
+        agentOutput = typeof outputContent === 'string' ? outputContent : outputContent.toString();
+      } catch {
+        // Agent output might not exist yet
+      }
+
+      // Check if automated tests passed by scanning agent output for failure indicators
+      const testFailureIndicators = [
+        'test failed',
+        'tests failed',
+        'FAILED',
+        'FAIL:',
+        'Error: ',
+        'browser installation was blocked',
+        'playwright install',
+        'Cannot find browser',
+        'browserType.launch:',
+        'npx playwright install',
+      ];
+      const outputLower = agentOutput.toLowerCase();
+      const hasTestFailure =
+        !feature.skipTests &&
+        testFailureIndicators.some((indicator) => outputLower.includes(indicator.toLowerCase()));
+
+      // Determine final status based on testing mode AND test results:
       // - skipTests=true (manual verification): go to 'waiting_approval' for manual review
-      const finalStatus = feature.skipTests ? 'waiting_approval' : 'verified';
+      // - skipTests=false + tests passed: go to 'verified'
+      // - skipTests=false + tests failed: go to 'waiting_approval' for manual review
+      const finalStatus = feature.skipTests || hasTestFailure ? 'waiting_approval' : 'verified';
       await this.updateFeatureStatus(projectPath, featureId, finalStatus);
+
+      if (hasTestFailure) {
+        logger.warn(
+          `[AutoMode] Feature ${featureId} has test failures - moved to waiting_approval for manual review`
+        );
+      }
 
       // Record success to reset consecutive failure tracking
       this.recordSuccess();
 
       // Record learnings and memory usage after successful feature completion
       try {
-        const featureDir = getFeatureDir(projectPath, featureId);
-        const outputPath = path.join(featureDir, 'agent-output.md');
-        let agentOutput = '';
-        try {
-          const outputContent = await secureFs.readFile(outputPath, 'utf-8');
-          agentOutput =
-            typeof outputContent === 'string' ? outputContent : outputContent.toString();
-        } catch {
-          // Agent output might not exist yet
-        }
-
         // Record memory usage if we loaded any memory files
         if (contextResult.memoryFiles.length > 0 && agentOutput) {
           await recordMemoryUsage(
             projectPath,
             contextResult.memoryFiles,
             agentOutput,
-            true, // success
+            !hasTestFailure, // success only if no test failures
             secureFs as Parameters<typeof recordMemoryUsage>[4]
           );
         }
@@ -1390,10 +1415,10 @@ export class AutoModeService {
         featureId,
         featureName: feature.title,
         branchName: feature.branchName ?? null,
-        passes: true,
+        passes: !hasTestFailure,
         message: `Feature completed in ${Math.round(
           (Date.now() - tempRunningFeature.startTime) / 1000
-        )}s${finalStatus === 'verified' ? ' - auto-verified' : ''}`,
+        )}s${finalStatus === 'verified' ? ' - auto-verified' : hasTestFailure ? ' - tests failed, needs manual review' : ''}`,
         projectPath,
         model: tempRunningFeature.model,
         provider: tempRunningFeature.provider,
@@ -1751,7 +1776,35 @@ Complete the pipeline step instructions above. Review the previous work and appl
         `[AutoMode] Step ${pipelineInfo.stepId} no longer exists in pipeline, completing feature without pipeline`
       );
 
-      const finalStatus = feature.skipTests ? 'waiting_approval' : 'verified';
+      // Check agent output for test failures before determining status
+      const featureDir = getFeatureDir(projectPath, featureId);
+      const outputPath = path.join(featureDir, 'agent-output.md');
+      let agentOutput = '';
+      try {
+        const outputContent = await secureFs.readFile(outputPath, 'utf-8');
+        agentOutput = typeof outputContent === 'string' ? outputContent : outputContent.toString();
+      } catch {
+        // Agent output might not exist
+      }
+
+      const testFailureIndicators = [
+        'test failed',
+        'tests failed',
+        'FAILED',
+        'FAIL:',
+        'Error: ',
+        'browser installation was blocked',
+        'playwright install',
+        'Cannot find browser',
+        'browserType.launch:',
+        'npx playwright install',
+      ];
+      const outputLower = agentOutput.toLowerCase();
+      const hasTestFailure =
+        !feature.skipTests &&
+        testFailureIndicators.some((indicator) => outputLower.includes(indicator.toLowerCase()));
+
+      const finalStatus = feature.skipTests || hasTestFailure ? 'waiting_approval' : 'verified';
 
       await this.updateFeatureStatus(projectPath, featureId, finalStatus);
 
@@ -1759,9 +1812,10 @@ Complete the pipeline step instructions above. Review the previous work and appl
         featureId,
         featureName: feature.title,
         branchName: feature.branchName ?? null,
-        passes: true,
-        message:
-          'Pipeline step no longer exists - feature completed without remaining pipeline steps',
+        passes: !hasTestFailure,
+        message: hasTestFailure
+          ? 'Pipeline step no longer exists - tests failed, needs manual review'
+          : 'Pipeline step no longer exists - feature completed without remaining pipeline steps',
         projectPath,
       });
 
@@ -1868,14 +1922,44 @@ Complete the pipeline step instructions above. Review the previous work and appl
 
     // If no steps left to execute, complete the feature
     if (stepsToExecute.length === 0) {
-      const finalStatus = feature.skipTests ? 'waiting_approval' : 'verified';
+      // Check agent output for test failures before determining status
+      const featureDir = getFeatureDir(projectPath, featureId);
+      const outputPath = path.join(featureDir, 'agent-output.md');
+      let agentOutput = '';
+      try {
+        const outputContent = await secureFs.readFile(outputPath, 'utf-8');
+        agentOutput = typeof outputContent === 'string' ? outputContent : outputContent.toString();
+      } catch {
+        // Agent output might not exist
+      }
+
+      const testFailureIndicators = [
+        'test failed',
+        'tests failed',
+        'FAILED',
+        'FAIL:',
+        'Error: ',
+        'browser installation was blocked',
+        'playwright install',
+        'Cannot find browser',
+        'browserType.launch:',
+        'npx playwright install',
+      ];
+      const outputLower = agentOutput.toLowerCase();
+      const hasTestFailure =
+        !feature.skipTests &&
+        testFailureIndicators.some((indicator) => outputLower.includes(indicator.toLowerCase()));
+
+      const finalStatus = feature.skipTests || hasTestFailure ? 'waiting_approval' : 'verified';
       await this.updateFeatureStatus(projectPath, featureId, finalStatus);
       this.emitAutoModeEvent('auto_mode_feature_complete', {
         featureId,
         featureName: feature.title,
         branchName: feature.branchName ?? null,
-        passes: true,
-        message: 'Pipeline completed (all remaining steps excluded)',
+        passes: !hasTestFailure,
+        message: hasTestFailure
+          ? 'Pipeline completed - tests failed, needs manual review'
+          : 'Pipeline completed (all remaining steps excluded)',
         projectPath,
       });
       return;
@@ -1960,8 +2044,36 @@ Complete the pipeline step instructions above. Review the previous work and appl
         autoLoadClaudeMd
       );
 
+      // Check agent output for test failures before determining status
+      const featureDir = getFeatureDir(projectPath, featureId);
+      const outputPath = path.join(featureDir, 'agent-output.md');
+      let agentOutput = '';
+      try {
+        const outputContent = await secureFs.readFile(outputPath, 'utf-8');
+        agentOutput = typeof outputContent === 'string' ? outputContent : outputContent.toString();
+      } catch {
+        // Agent output might not exist
+      }
+
+      const testFailureIndicators = [
+        'test failed',
+        'tests failed',
+        'FAILED',
+        'FAIL:',
+        'Error: ',
+        'browser installation was blocked',
+        'playwright install',
+        'Cannot find browser',
+        'browserType.launch:',
+        'npx playwright install',
+      ];
+      const outputLower = agentOutput.toLowerCase();
+      const hasTestFailure =
+        !feature.skipTests &&
+        testFailureIndicators.some((indicator) => outputLower.includes(indicator.toLowerCase()));
+
       // Determine final status
-      const finalStatus = feature.skipTests ? 'waiting_approval' : 'verified';
+      const finalStatus = feature.skipTests || hasTestFailure ? 'waiting_approval' : 'verified';
       await this.updateFeatureStatus(projectPath, featureId, finalStatus);
 
       console.log('[AutoMode] Pipeline resume completed successfully');
@@ -1970,8 +2082,10 @@ Complete the pipeline step instructions above. Review the previous work and appl
         featureId,
         featureName: feature.title,
         branchName: feature.branchName ?? null,
-        passes: true,
-        message: 'Pipeline resumed and completed successfully',
+        passes: !hasTestFailure,
+        message: hasTestFailure
+          ? 'Pipeline resumed - tests failed, needs manual review'
+          : 'Pipeline resumed and completed successfully',
         projectPath,
       });
     } catch (error) {
@@ -2209,10 +2323,39 @@ Address the follow-up instructions above. Review the previous work and make the 
         }
       );
 
-      // Determine final status based on testing mode:
-      // - skipTests=false (automated testing): go directly to 'verified' (no manual verify needed)
+      // Check agent output for test failures before determining status
+      const featureDir = getFeatureDir(projectPath, featureId);
+      const outputPath = path.join(featureDir, 'agent-output.md');
+      let agentOutput = '';
+      try {
+        const outputContent = await secureFs.readFile(outputPath, 'utf-8');
+        agentOutput = typeof outputContent === 'string' ? outputContent : outputContent.toString();
+      } catch {
+        // Agent output might not exist
+      }
+
+      const testFailureIndicators = [
+        'test failed',
+        'tests failed',
+        'FAILED',
+        'FAIL:',
+        'Error: ',
+        'browser installation was blocked',
+        'playwright install',
+        'Cannot find browser',
+        'browserType.launch:',
+        'npx playwright install',
+      ];
+      const outputLower = agentOutput.toLowerCase();
+      const hasTestFailure =
+        !feature?.skipTests &&
+        testFailureIndicators.some((indicator) => outputLower.includes(indicator.toLowerCase()));
+
+      // Determine final status based on testing mode AND test results:
       // - skipTests=true (manual verification): go to 'waiting_approval' for manual review
-      const finalStatus = feature?.skipTests ? 'waiting_approval' : 'verified';
+      // - skipTests=false + tests passed: go to 'verified'
+      // - skipTests=false + tests failed: go to 'waiting_approval' for manual review
+      const finalStatus = feature?.skipTests || hasTestFailure ? 'waiting_approval' : 'verified';
       await this.updateFeatureStatus(projectPath, featureId, finalStatus);
 
       // Record success to reset consecutive failure tracking
@@ -2222,8 +2365,10 @@ Address the follow-up instructions above. Review the previous work and make the 
         featureId,
         featureName: feature?.title,
         branchName: branchName ?? null,
-        passes: true,
-        message: `Follow-up completed successfully${finalStatus === 'verified' ? ' - auto-verified' : ''}`,
+        passes: !hasTestFailure,
+        message: hasTestFailure
+          ? 'Follow-up completed - tests failed, needs manual review'
+          : `Follow-up completed successfully${finalStatus === 'verified' ? ' - auto-verified' : ''}`,
         projectPath,
         model,
         provider,

@@ -52,14 +52,16 @@ import {
   createGetExampleConfigHandler,
 } from './routes/cursor-config.js';
 
-export function createSetupRoutes(): Router {
+import type { SettingsService } from '../../services/settings-service.js';
+
+export function createSetupRoutes(settingsService?: SettingsService): Router {
   const router = Router();
 
   router.get('/claude-status', createClaudeStatusHandler());
   router.post('/install-claude', createInstallClaudeHandler());
   router.post('/auth-claude', createAuthClaudeHandler());
   router.post('/deauth-claude', createDeauthClaudeHandler());
-  router.post('/store-api-key', createStoreApiKeyHandler());
+  router.post('/store-api-key', createStoreApiKeyHandler(settingsService));
   router.post('/delete-api-key', createDeleteApiKeyHandler());
   router.get('/api-keys', createApiKeysHandler());
   router.get('/platform', createPlatformHandler());

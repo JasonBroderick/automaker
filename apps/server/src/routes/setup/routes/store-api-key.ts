@@ -5,10 +5,11 @@
 import type { Request, Response } from 'express';
 import { setApiKey, persistApiKeyToEnv, getErrorMessage, logError } from '../common.js';
 import { createLogger } from '@automaker/utils';
+import type { SettingsService } from '../../../services/settings-service.js';
 
 const logger = createLogger('Setup');
 
-export function createStoreApiKeyHandler() {
+export function createStoreApiKeyHandler(settingsService?: SettingsService) {
   return async (req: Request, res: Response): Promise<void> => {
     try {
       const { provider, apiKey } = req.body as {
@@ -35,9 +36,27 @@ export function createStoreApiKeyHandler() {
         return;
       }
 
+      // Store in memory cache and process.env
       setApiKey(provider, apiKey);
       process.env[envKey] = apiKey;
+
+      // Persist to .env file
       await persistApiKeyToEnv(envKey, apiKey);
+
+      // Also persist to credentials.json via SettingsService
+      if (settingsService) {
+        const credentialKey = provider === 'anthropic_oauth_token' ? 'anthropic' : provider;
+        // Get current credentials and update only the changed key
+        const currentCredentials = await settingsService.getCredentials();
+        await settingsService.updateCredentials({
+          apiKeys: {
+            ...currentCredentials.apiKeys,
+            [credentialKey]: apiKey,
+          },
+        });
+        logger.info(`[Setup] Stored API key in credentials.json for ${credentialKey}`);
+      }
+
       logger.info(`[Setup] Stored API key as ${envKey}`);
 
       res.json({ success: true });

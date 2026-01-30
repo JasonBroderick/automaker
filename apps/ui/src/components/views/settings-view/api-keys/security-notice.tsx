@@ -7,7 +7,7 @@ interface SecurityNoticeProps {
 
 export function SecurityNotice({
   title = 'Security Notice',
-  message = "API keys are stored in your browser's local storage. Never share your API keys or commit them to version control.",
+  message = 'API keys are stored securely on the server in the data directory. Never share your API keys or commit them to version control.',
 }: SecurityNoticeProps) {
   return (
     <div className="flex items-start gap-3 p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20">

@@ -56,26 +56,58 @@ export function useApiKeyManagement() {
     setOpenaiKey(apiKeys.openai);
   }, [apiKeys]);
 
-  // Check API key status from environment on mount
+  // Load credentials from server on mount
   useEffect(() => {
-    const checkApiKeyStatus = async () => {
+    const loadCredentials = async () => {
       const api = getElectronAPI();
+
+      // First, try to get masked credentials from server (shows if keys are configured)
+      if (api?.settings?.getCredentials) {
+        try {
+          const result = await api.settings.getCredentials();
+          if (result.success && result.credentials) {
+            const creds = result.credentials;
+            setApiKeyStatus({
+              hasAnthropicKey: creds.anthropic?.configured || false,
+              hasGoogleKey: creds.google?.configured || false,
+              hasOpenaiKey: creds.openai?.configured || false,
+            });
+            // Show masked values as placeholders if configured
+            if (creds.anthropic?.configured && creds.anthropic?.masked) {
+              setAnthropicKey(creds.anthropic.masked);
+            }
+            if (creds.google?.configured && creds.google?.masked) {
+              setGoogleKey(creds.google.masked);
+            }
+            if (creds.openai?.configured && creds.openai?.masked) {
+              setOpenaiKey(creds.openai.masked);
+            }
+          }
+        } catch (error) {
+          logger.error('Failed to load credentials from server:', error);
+        }
+      }
+
+      // Fallback: check API key status from setup endpoint
       if (api?.setup?.getApiKeys) {
         try {
           const status = await api.setup.getApiKeys();
           if (status.success) {
-            setApiKeyStatus({
-              hasAnthropicKey: status.hasAnthropicKey,
-              hasGoogleKey: status.hasGoogleKey,
-              hasOpenaiKey: status.hasOpenaiKey,
-            });
+            setApiKeyStatus(
+              (prev) =>
+                prev || {
+                  hasAnthropicKey: status.hasAnthropicKey,
+                  hasGoogleKey: status.hasGoogleKey,
+                  hasOpenaiKey: status.hasOpenaiKey,
+                }
+            );
           }
         } catch (error) {
           logger.error('Failed to check API key status:', error);
         }
       }
     };
-    checkApiKeyStatus();
+    loadCredentials();
   }, []);
 
   // Test Anthropic/Claude connection
@@ -173,13 +205,44 @@ export function useApiKeyManagement() {
     }
   };
 
-  // Save API keys
-  const handleSave = () => {
+  // Save API keys - persist to both Zustand store AND server credentials
+  const handleSave = async () => {
+    // Helper to check if a value is a masked key (not a real key)
+    const isMaskedKey = (value: string) => value.includes('...');
+
+    // Only include keys that are real (not masked placeholders)
+    const keysToSave: { anthropic?: string; google?: string; openai?: string } = {};
+
+    if (anthropicKey && !isMaskedKey(anthropicKey)) {
+      keysToSave.anthropic = anthropicKey;
+    }
+    if (googleKey && !isMaskedKey(googleKey)) {
+      keysToSave.google = googleKey;
+    }
+    if (openaiKey && !isMaskedKey(openaiKey)) {
+      keysToSave.openai = openaiKey;
+    }
+
+    // Update client-side store (with actual values only, preserve empty for masked)
     setApiKeys({
-      anthropic: anthropicKey,
-      google: googleKey,
-      openai: openaiKey,
+      anthropic: keysToSave.anthropic || '',
+      google: keysToSave.google || '',
+      openai: keysToSave.openai || '',
     });
+
+    // Persist to server credentials.json (only changed keys)
+    if (Object.keys(keysToSave).length > 0) {
+      try {
+        const api = getElectronAPI();
+        if (api?.settings?.updateCredentials) {
+          await api.settings.updateCredentials({ apiKeys: keysToSave });
+          logger.info('API keys persisted to server');
+        }
+      } catch (error) {
+        logger.error('Failed to persist API keys to server:', error);
+      }
+    }
+
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
