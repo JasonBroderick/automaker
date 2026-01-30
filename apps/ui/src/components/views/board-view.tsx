@@ -455,6 +455,37 @@ export function BoardView() {
   // Mutation to persist maxConcurrency to server settings
   const updateGlobalSettings = useUpdateGlobalSettings({ showSuccessToast: false });
 
+  // Manual refresh handler to sync UI state with server
+  // Must be after autoMode is defined
+  const handleRefresh = useCallback(async () => {
+    if (!currentProject?.path) return;
+
+    logger.info('[Board] Manual refresh triggered');
+
+    // Invalidate all relevant queries to force refetch from server
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.features.all(currentProject.path) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.runningAgents.all() }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.worktrees.all(currentProject.path) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.autoMode.status(currentProject.path) }),
+    ]);
+
+    // Also refresh auto mode status directly
+    try {
+      const api = getElectronAPI();
+      const status = await api.autoMode.getStatus();
+      if (status.isRunning !== autoMode.isRunning) {
+        logger.info(
+          `[Board] Auto mode state mismatch - server: ${status.isRunning}, UI: ${autoMode.isRunning}`
+        );
+      }
+    } catch (error) {
+      logger.error('[Board] Failed to refresh auto mode status:', error);
+    }
+
+    logger.info('[Board] Refresh complete');
+  }, [currentProject?.path, queryClient, autoMode.isRunning]);
+
   // Get the current branch from the selected worktree (not from store which may be stale)
   const currentWorktreeBranch = selectedWorktree?.branch ?? null;
 
@@ -1333,6 +1364,7 @@ export function BoardView() {
         onShowBoardBackground={() => setShowBoardBackgroundModal(true)}
         viewMode={viewMode}
         onViewModeChange={setViewMode}
+        onRefresh={handleRefresh}
       />
 
       {/* DndContext wraps both WorktreePanel and main content area to enable drag-to-worktree */}

@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { Wand2, GitBranch, ClipboardCheck } from 'lucide-react';
+import { Wand2, GitBranch, ClipboardCheck, RefreshCw } from 'lucide-react';
 import { UsagePopover } from '@/components/usage-popover';
 import { useAppStore } from '@/store/app-store';
 import { useSetupStore } from '@/store/setup-store';
@@ -38,6 +38,8 @@ interface BoardHeaderProps {
   // View toggle props
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
+  // Refresh handler
+  onRefresh?: () => Promise<void>;
 }
 
 // Shared styles for header control containers
@@ -62,6 +64,7 @@ export function BoardHeader({
   onShowBoardBackground,
   viewMode,
   onViewModeChange,
+  onRefresh,
 }: BoardHeaderProps) {
   const claudeAuthStatus = useSetupStore((state) => state.claudeAuthStatus);
   const skipVerificationInAutoMode = useAppStore((state) => state.skipVerificationInAutoMode);
@@ -110,6 +113,18 @@ export function BoardHeader({
 
   // State for mobile actions panel
   const [showActionsPanel, setShowActionsPanel] = useState(false);
+  // State for refresh button
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = useCallback(async () => {
+    if (!onRefresh || isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [onRefresh, isRefreshing]);
 
   const isTablet = useIsTablet();
 
@@ -125,6 +140,20 @@ export function BoardHeader({
         />
         {isMounted && <ViewToggle viewMode={viewMode} onViewModeChange={onViewModeChange} />}
         <BoardControls isMounted={isMounted} onShowBoardBackground={onShowBoardBackground} />
+        {/* Refresh button to sync UI with server state */}
+        {isMounted && onRefresh && (
+          <button
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="flex items-center justify-center w-8 h-8 rounded-md bg-secondary border border-border hover:bg-secondary/80 transition-colors disabled:opacity-50"
+            title="Refresh board state from server"
+            data-testid="refresh-board-button"
+          >
+            <RefreshCw
+              className={`w-4 h-4 text-muted-foreground ${isRefreshing ? 'animate-spin' : ''}`}
+            />
+          </button>
+        )}
       </div>
       <div className="flex gap-4 items-center">
         {/* Usage Popover - show if either provider is authenticated, only on desktop */}
